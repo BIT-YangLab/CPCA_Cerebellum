@@ -6,15 +6,31 @@ import pickle
 from numpy.linalg import pinv
 from scipy.signal import hilbert
 from scipy.stats import zscore
-from utils.utils_cere import load_data_and_stack, write_to_cifti
+from utils.utils_cortex import load_data_and_stack, write_to_cifti
 from utils.rotation import varimax, promax
 import nibabel as nib
 
 
-def hilbert_transform(input_data):
-    complex_data = hilbert(input_data, axis=0)
-    return complex_data.conj()
+def save_as_memmap(arr, filename, dtype=np.complex64):
+    fp = np.memmap(filename, dtype=dtype, mode='w+', shape=arr.shape)
+    fp[:] = arr[:]
+    del fp
 
+def hilbert_transform(input_data):
+    complex_data = hilbert(input_data.astype(np.float32), axis=0)
+    return complex_data.astype(np.complex64).conj()
+    
+def hilbert_block(data, block=2000):
+    nT, nV = data.shape
+    out = np.zeros((nT, nV), dtype=np.complex64)
+    for i in range(0, nV, block):
+        if i+block > 91282:
+            block_data = data[:, i:]
+            out[:, i:] = hilbert(block_data, axis=0).astype(np.complex64)
+        else:
+            block_data = data[:, i:i+block]
+            out[:, i:i+block] = hilbert(block_data, axis=0).astype(np.complex64)
+    return out
 
 def pca(input_data, n_comps, n_iter=100, l=10):
     l += n_comps
@@ -22,7 +38,7 @@ def pca(input_data, n_comps, n_iter=100, l=10):
     (U, s, Va) = fbpca.pca(input_data, k=n_comps, n_iter=n_iter, l = l)
     explained_variance_ = (s ** 2) / (n_samples - 1)
     pc_scores = input_data @ Va.T
-    loadings =  Va.T @ np.diag(s) 
+    loadings =  Va.T @ np.diag(s)
     loadings /= np.sqrt(input_data.shape[0]-1)
     output_dict = {
         'U': U,
@@ -42,20 +58,44 @@ def run_main(n_comps, n_sub, rotate,
     n_comps: Number of components to be remained
     n_sub: Number of individuals
     '''
-    analysis_str = f'/home/lvshuo/VDisk4/Lvshuo/2024_cerebellum_CPCA_rs-patterns_in_HCP/results_cere/CPCA_cerebellum/cpca_cere_{n_comps}pcs_{path}'
+    analysis_str = f'/home/lvshuo/VDisk4/Lvshuo/2024_cerebellum_CPCA_rs-patterns_in_HCP/results_cortex/cpca_cortex_{n_comps}pcs_{path}'
     print(analysis_str)
     group_data, hdr, zero_mask, cifti_obj = load_data_and_stack(n_sub, input_type, path, rotate)
     group_data = group_data.astype(np.float32)
-    group_data = zscore(group_data)
+    group_data = zscore(group_data).astype(np.float32)
     print(group_data.shape)
+    if shuffle_ts:
+        group_data = shuffle_time(group_data)
+    if simulate_var:
+        group_data = var_simulate(group_data, group_data.shape[0])
     if pca_type == 'complex':
-        group_data = hilbert_transform(group_data)
+        #group_data = hilbert_transform(group_data)
+        group_data = hilbert_block(group_data)
     print('HT done. ')
-    pca_output = pca(group_data, n_comps)
+    save_as_memmap(group_data, "group_data_hilbert.dat")
+    del group_data
+    A = np.memmap("group_data_hilbert.dat", dtype=np.complex64, mode='r', shape=(int(2400*50), 64984))
+    pca_output = pca(A, n_comps)
 
     write_results(input_type, pca_output, rotate, shuffle_ts, simulate_var, pca_output['loadings'], n_comps, hdr, pca_type, zero_mask, analysis_str, cifti_obj)
     del pca_output
-    del group_data
+
+
+def shuffle_time(data):
+    shuffle_indx = np.arange(data.shape[0])
+    for i in range(100):
+        shuffle_indx = np.random.permutation(shuffle_indx)
+    return data[shuffle_indx, :]
+
+
+def var_simulate(data, n_simulate, pca_n=200):
+    pca_dim_res = pca(data, pca_n)
+    var = VAR(pca_dim_res['pc_scores'])
+    var_res = var.fit(maxlags=1)
+    data_sim = var_res.simulate_var(n_simulate)
+    data_sim = data_sim @ pca_dim_res['Va']
+    return data_sim
+
 
 
 def write_results(input_type, pca_output, rotate, shuffle_ts, simulate_var, comp_weights, 
@@ -76,16 +116,16 @@ def write_results(input_type, pca_output, rotate, shuffle_ts, simulate_var, comp
                     }, open(f'{analysis_str}_results.pkl', 'wb'))
         comp_weights_amp_cere = np.abs(comp_weights)
         comp_weights_amp = np.zeros((n_comps, length_full))
-        comp_weights_amp[:, cere_start:cere_end] = comp_weights_amp_cere
+        comp_weights_amp[:, :64984] = comp_weights_amp_cere
         comp_weights_ang_cere = np.angle(comp_weights)
         comp_weights_ang = np.zeros((n_comps, length_full))
-        comp_weights_ang[:, cere_start:cere_end] = comp_weights_ang_cere
+        comp_weights_ang[:, :64984] = comp_weights_ang_cere
         comp_weights_real_cere = np.real(comp_weights)
         comp_weights_real = np.zeros((n_comps, length_full))
-        comp_weights_real[:, cere_start:cere_end] = comp_weights_real_cere
+        comp_weights_real[:, :64984] = comp_weights_real_cere
         comp_weights_imag_cere = np.imag(comp_weights)
         comp_weights_imag = np.zeros((n_comps, length_full))
-        comp_weights_imag[:, cere_start:cere_end] = comp_weights_imag_cere
+        comp_weights_imag[:, :64984] = comp_weights_imag_cere
         if input_type == 'cifti' or input_type == 'indice':
             write_to_cifti(comp_weights_ang, hdr, n_comps, f'{analysis_str}_ang')
             write_to_cifti(comp_weights_amp, hdr, n_comps, f'{analysis_str}_amp')
@@ -94,7 +134,7 @@ def write_results(input_type, pca_output, rotate, shuffle_ts, simulate_var, comp
     elif pca_type == 'real':
         pickle.dump(pca_output, open(f'{analysis_str}_results.pkl', 'wb'))
         comp_weights_cere = np.zeros((n_comps, length_full))
-        comp_weights_cere[:, cere_start:cere_end] = comp_weights
+        comp_weights_cere[:, cortex_start:cortex_end] = comp_weights
         if input_type == 'cifti' or input_type == 'indice':
             write_to_cifti(comp_weights_cere, hdr, n_comps, analysis_str)
 

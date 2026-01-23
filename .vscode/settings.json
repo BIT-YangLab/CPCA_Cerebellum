@@ -1,0 +1,26 @@
+{
+    "python-envs.pythonProjects": [
+        {
+            "path": "BOLD_pic.py",
+            "envManager": "ms-python.python:conda",
+            "packageManager": "ms-python.python:conda"
+        },
+        {
+            "path": "LSVM_sex_wholebrain.py",
+            "envManager": "ms-python.python:conda",
+            "packageManager": "ms-python.python:conda"
+        },
+        {
+            "path": "BOLD_simulation.py",
+            "envManager": "ms-python.python:conda",
+            "packageManager": "ms-python.python:conda"
+        },
+        {
+            "path": "cpca_cere.py",
+            "envManager": "ms-python.python:conda",
+            "packageManager": "ms-python.python:conda"
+        }
+    ],
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda"
+}
